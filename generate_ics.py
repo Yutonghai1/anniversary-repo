@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 import os
 import yaml
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 
 def load_config(path="config.yaml"):
     """读取 YAML 配置文件"""
     if not os.path.exists(path):
         raise FileNotFoundError(f"找不到配置文件: {path}")
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        data = yaml.safe_load(f)
+        # 增加空文件保护
+        if not data:
+            raise ValueError("❌ config.yaml 内容为空或格式错误，请检查缩进和冒号（必须是英文冒号且后跟空格）")
+        return data
 
 def generate_ics(config, output_path="output/anniversary.ics"):
     """根据配置生成 ICS 日历文件"""
-    # ICS 文件的基础头部
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -20,57 +23,59 @@ def generate_ics(config, output_path="output/anniversary.ics"):
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
         "X-WR-CALNAME:纪念日",
-        "X-APPLE-CALENDAR-COLOR:#FF2968", # 给苹果日历设置一个粉色主题
+        "X-APPLE-CALENDAR-COLOR:#FF2968",
     ]
     
-    # 获取今天的日期
     today = date.today()
-    # 计算明天的日期（用于全天事件的 DTEND）
     tomorrow = today + timedelta(days=1)
     
-    now_utc = datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')
+    # 修复 utcnow 的警告，使用带时区的当前时间
+    now_utc = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     
-    for idx, item in enumerate(config.get("anniversaries", [])):
-        name = item["name"]
-        # 解析配置中的日期时间
-        start_dt = datetime.strptime(item["date"], "%Y-%m-%d %H:%M")
-        start_date = start_dt.date()
+    anniversaries = config.get("anniversaries", [])
+    if not anniversaries:
+        raise ValueError("❌ 在 config.yaml 中未找到 'anniversaries' 列表，请检查拼写")
+
+    for idx, item in enumerate(anniversaries):
+        name = item.get("name", "未命名")
+        date_str = item.get("date")
         
-        # 计算天数差
+        if not date_str:
+            print(f"⚠️ 警告: 第 {idx+1} 个纪念日缺少 'date' 字段，已跳过")
+            continue
+            
+        try:
+            start_dt = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
+            start_date = start_dt.date()
+        except ValueError:
+            print(f"⚠️ 警告: '{date_str}' 日期格式错误，应为 'YYYY-MM-DD HH:MM'，已跳过")
+            continue
+        
         delta_days = (today - start_date).days
         
         if delta_days >= 0:
-            # 纪念日已过（含当天），计算正数天数。当天算第 1 天
             days_count = delta_days + 1
             title = f"{name} 第 {days_count} 天"
         else:
-            # 纪念日还没到，计算倒数天数
             days_left = abs(delta_days)
             title = f"距离 {name} 还有 {days_left} 天"
         
-        # 为了保证每天日历都能刷新，UID 必须包含今天的日期
-        # 这样苹果日历会认为每天是一个新事件，替换掉旧的，不会堆积
         uid = f"anniv-{idx}-{today.strftime('%Y%m%d')}@github-actions"
         
         lines.extend([
             "BEGIN:VEVENT",
             f"UID:{uid}",
             f"DTSTAMP:{now_utc}",
-            # 设置为全天事件 (VALUE=DATE)
             f"DTSTART;VALUE=DATE:{today.strftime('%Y%m%d')}",
             f"DTEND;VALUE=DATE:{tomorrow.strftime('%Y%m%d')}",
             f"SUMMARY:{title}",
-            "TRANSP:TRANSPARENT", # 设置为“空闲”，不占用你的日程时间
+            "TRANSP:TRANSPARENT",
             "END:VEVENT",
         ])
     
-    # ICS 文件尾部
     lines.append("END:VCALENDAR")
-    
-    # 确保输出目录存在
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
-    # 写入文件（使用 \r\n 换行是 ICS 格式的严格标准）
     with open(output_path, "w", encoding="utf-8", newline="\r\n") as f:
         f.write("\n".join(lines))
         
