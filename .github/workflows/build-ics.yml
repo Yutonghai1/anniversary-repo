@@ -34,3 +34,28 @@ jobs:
       - name: Deploy to GitHub Pages
         uses: actions/deploy-pages@v4
         id: deployment
+  keepalive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check days since last commit
+        id: check
+        run: |
+          LAST_COMMIT=$(git log -1 --format=%ct)
+          NOW=$(date +%s)
+          DAYS=$(( (NOW - LAST_COMMIT) / 86400 ))
+          echo "days=$DAYS" >> $GITHUB_OUTPUT
+          echo "距离上次提交已过 $DAYS 天"
+
+      - name: Keep alive commit
+        if: steps.check.outputs.days >= 50
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo "keepalive $(date -u)" > .github/keepalive.txt
+          git add .github/keepalive.txt
+          git commit -m "chore: keepalive (reset 60-day timer)"
+          git push
